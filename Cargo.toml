@@ -1,26 +1,30 @@
 [package]
-name = "tmc5160"
+name = "tmc5160-async"
 version = "0.0.1"
 categories = [
     "embedded",
     "hardware-support",
     "no-std",
 ]
-authors = ["Boris Vinogradov <no111u3@gmail.com>", "Linus Leo Stöckli <https://github.com/hacknus>"]
+
+
+authors = ["Boris Vinogradov <no111u3@gmail.com>", "Linus Leo Stöckli <https://github.com/hacknus>", "Markus Adamek"]
 description = "A platform agnostic TMC5160 Trinamic integrated stepper motor controller"
-edition = "2021"
-keywords = ["embedded-hal-driver", "motor-controller", "stepper", "tmc5160"]
+edition = "2024"
+keywords = ["embedded-hal-driver", "motor-controller", "stepper", "tmc5160", "async"]
 repository = "https://github.com/no111u3/tmc5160"
 readme = "README.md"
 license = "Apache-2.0"
+
+[features]
+async = []
 
 [dependencies]
 modular-bitfield = "0.11.2"
 modular-bitfield-to-value = { version = "*", git = "https://github.com/hacknus/modular-bitfield-to-value"}
 
-[dependencies.embedded-hal]
-version = "0.2.2"
-features = ["unproven"]
+embedded-hal-async = "1.0.0"
+embedded-hal = "1.0.0"
 
 [profile.dev]
 incremental = false

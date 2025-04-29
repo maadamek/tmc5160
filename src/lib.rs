@@ -11,12 +11,8 @@
 
 use core::fmt;
 use core::result::Result;
-
-use embedded_hal::{
-    blocking::spi::{Transfer, Write},
-    digital::v2::OutputPin,
-    spi::{Mode, Phase, Polarity},
-};
+use embedded_hal::digital::OutputPin;
+use embedded_hal_async::spi::{Mode, Phase, Polarity, SpiDevice};
 
 use crate::registers::*;
 
@@ -38,11 +34,11 @@ pub const MODE: Mode = Mode {
 
 #[derive(Debug)]
 /// Error type for the TMC5160
-pub enum Error<E> {
+pub enum Error<E,P> {
     /// SPI bus error
     Spi(E),
     /// Pin error
-    PinError,
+    PinError(P),
 }
 
 /// Data Exchange packet
@@ -62,10 +58,10 @@ impl fmt::Display for DataPacket {
 }
 
 /// TMC5160 driver
-pub struct Tmc5160<SPI, CS, EN> {
+pub struct Tmc5160<SPI, PIN> {
     spi: SPI,
-    cs: CS,
-    en: Option<EN>,
+    cs: PIN,
+    en: Option<PIN>,
     /// the max velocity that is set
     pub v_max: f32,
     /// status register of the driver
@@ -101,14 +97,15 @@ pub struct Tmc5160<SPI, CS, EN> {
     pub pwm_conf: PwmConf,
 }
 
-impl<SPI, CS, EN, E> Tmc5160<SPI, CS, EN>
+
+
+impl<SPI, PIN> Tmc5160<SPI, PIN>
     where
-        SPI: Transfer<u8, Error=E> + Write<u8, Error=E>,
-        CS: OutputPin,
-        EN: OutputPin,
+        SPI: SpiDevice,
+        PIN: OutputPin,
 {
     /// Create a new driver from a SPI peripheral and a NCS pin
-    pub fn new(spi: SPI, cs: CS) -> Self {
+    pub fn new(spi: SPI, cs: PIN) -> Self {
         Tmc5160 {
             spi,
             cs,
@@ -135,7 +132,7 @@ impl<SPI, CS, EN, E> Tmc5160<SPI, CS, EN>
     }
 
     /// attach an enable pin to the driver
-    pub fn attach_en(mut self, en: EN) -> Self {
+    pub fn attach_en(mut self, en: PIN) -> Self {
         self.en = Some(en);
         self
     }
@@ -170,134 +167,79 @@ impl<SPI, CS, EN, E> Tmc5160<SPI, CS, EN>
     }
 
     /// read a specified register
-    pub fn read_register<T>(&mut self, reg: T) -> Result<DataPacket, Error<E>>
+    pub async fn read_register<T>(&mut self, reg: T) -> Result<DataPacket, Error<SPI::Error, PIN::Error>>
         where
             T: Address + Copy,
     {
         // Process cmd to read, return previous (dummy) state
-        let _dummy = self.read_io(reg)?;
+        let _dummy = self.read_io(reg).await?;
         // Repeat cmd to read, return state
-        self.read_io(reg)
+        self.read_io(reg).await
     }
 
-    fn read_io<T>(&mut self, reg: T) -> Result<DataPacket, Error<E>>
+    async fn read_io<T>(&mut self, reg: T) -> Result<DataPacket, Error<SPI::Error, PIN::Error>>
         where
             T: Address + Copy,
     {
-        self.cs.set_low().ok();
+        self.cs.set_low().map_err(Error::PinError)?;
 
         let mut buffer = [reg.addr(), 0, 0, 0, 0];
 
-        let response = self.spi.transfer(&mut buffer).map_err(Error::Spi)?;
+        let mut response_buffer = [0u8;5];
 
-        self.cs.set_high().ok();
+       self.spi.transfer(&mut buffer, &mut response_buffer).await.map_err(Error::Spi)?;
+
+        self.cs.set_high().map_err(Error::PinError)?;
 
         let mut ret_val: [u8; 4] = [0; 4];
 
         for i in 0..4 {
-            ret_val[i] = response[i + 1];
+            ret_val[i] = response_buffer[i + 1];
         }
 
         let mut debug_val: [u8; 5] = [0; 5];
 
         for i in 0..5 {
-            debug_val[i] = response[i];
+            debug_val[i] = response_buffer[i];
         }
 
-        Ok(DataPacket { status: SpiStatus::from_bytes([response[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
+        Ok(DataPacket { status: SpiStatus::from_bytes([response_buffer[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
     }
 
     /// write value to a specified register
-    pub fn write_register<T>(&mut self, reg: T, val: &mut [u8; 4]) -> Result<DataPacket, Error<E>>
+    pub async fn write_register<T>(&mut self, reg: T, val: &mut [u8; 4]) -> Result<DataPacket, Error<SPI::Error, PIN::Error>>
         where
             T: Address + Copy,
     {
-        self.cs.set_low().ok();
+        self.cs.set_low().map_err(Error::PinError)?;
 
         let mut buffer = [reg.addr() | 0x80, val[0], val[1], val[2], val[3]];
 
         let debug_val = buffer.clone();
 
-        let response = self.spi.transfer(&mut buffer).map_err(Error::Spi)?;
+        let mut response_buffer = [0u8;5];
 
-        self.cs.set_high().ok();
+        self.spi.transfer(&mut buffer, &mut response_buffer).await.map_err(Error::Spi)?;
+
+        self.cs.set_high().map_err(Error::PinError)?;
 
         let mut ret_val: [u8; 4] = [0; 4];
 
         for i in 0..4 {
-            ret_val[i] = response[i + 1];
+            ret_val[i] = response_buffer[i + 1];
         }
 
-        Ok(DataPacket { status: SpiStatus::from_bytes([response[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
+        Ok(DataPacket { status: SpiStatus::from_bytes([response_buffer[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
     }
 
-    /// read a specified register according to the old implementation
-    pub fn old_read_register(&mut self, register: u8, buffer: &mut [u8; 5]) {
-        let mut read_cmd = [register, 0x00, 0x00, 0x00, 0x00];
-
-        self.cs.set_low().ok();
-        //usb_println(arrform!(64,"write buffer {:?}",read_cmd).as_str());
-        match self.spi.transfer(&mut read_cmd) {
-            Ok(r) => {
-                buffer[0] = r[0];
-                buffer[1] = r[1];
-                buffer[2] = r[2];
-                buffer[3] = r[3];
-                buffer[4] = r[4];
-                //usb_println(arrform!(64,"read answer {:?}",r).as_str());
-            }
-            Err(_err) => {
-                //usb_println(arrform!(64, "spi failed to read = {:?}", err).as_str());
-            }
-        }
-        self.cs.set_high().ok();
-
-        let mut read_cmd = [register, 0x00, 0x00, 0x00, 0x00];
-
-        self.cs.set_low().ok();
-        //usb_println(arrform!(64,"write buffer {:?}",read_cmd).as_str());
-        match self.spi.transfer(&mut read_cmd) {
-            Ok(r) => {
-                buffer[0] = r[0];
-                buffer[1] = r[1];
-                buffer[2] = r[2];
-                buffer[3] = r[3];
-                buffer[4] = r[4];
-                //usb_println(arrform!(64,"read answer {:?}",r).as_str());
-            }
-            Err(_err) => {
-                //usb_println(arrform!(64, "spi failed to read = {:?}", err).as_str());
-            }
-        }
-        self.cs.set_high().ok();
-    }
-
-    /// write value to a specified register according to the old implementation
-    pub fn old_write_register(&mut self, register: u8, payload: &[u8; 4]) -> u8 {
-        self.cs.set_low().ok();
-        let mut status_byte = 0;
-        let mut buffer: [u8; 5] = [register | 0x80, payload[0], payload[1], payload[2], payload[3]];
-        // usb_println(arrform!(64,"write buffer {:?}",buffer).as_str());
-        match self.spi.transfer(&mut buffer) {
-            Ok(r) => {
-                //usb_println(arrform!(64,"write answer {:?}",r).as_str());
-                status_byte = r[0];
-            }
-            Err(_err) => {
-                //usb_println(arrform!(64, "spi failed to write = {:?}", err).as_str());
-            }
-        }
-        self.cs.set_high().ok();
-        status_byte
-    }
 
     /// enable the motor if the EN pin was specified
-    pub fn enable(&mut self) -> Result<(), Error<E>> {
+    pub fn enable(&mut self) -> Result<(), Error<SPI::Error, PIN::Error>> {
         if let Some(pin) = &mut self.en {
             if self._en_inverted {
-                pin.set_high().map_err(|_| Error::PinError)
+                pin.set_high().map_err(Error::PinError)
             } else {
-                pin.set_low().map_err(|_| Error::PinError)
+                pin.set_low().map_err(Error::PinError)
             }
         } else {
             Ok(())
@@ -305,12 +247,12 @@ impl<SPI, CS, EN, E> Tmc5160<SPI, CS, EN>
     }
 
     /// disable the motor if the EN pin was specified
-    pub fn disable(&mut self) -> Result<(), Error<E>> {
+    pub fn disable(&mut self) -> Result<(), Error<SPI::Error, PIN::Error>> {
         if let Some(pin) = &mut self.en {
             if self._en_inverted {
-                pin.set_low().map_err(|_| Error::PinError)
+                pin.set_low().map_err(Error::PinError)
             } else {
-                pin.set_high().map_err(|_| Error::PinError)
+                pin.set_high().map_err(Error::PinError)
             }
         } else {
             Ok(())
@@ -318,299 +260,299 @@ impl<SPI, CS, EN, E> Tmc5160<SPI, CS, EN>
     }
 
     /// clear G_STAT register
-    pub fn clear_g_stat(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn clear_g_stat(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = 0b111_u32.to_be_bytes();
         //let mut value= (!0_u32).to_be_bytes();
-        self.write_register(Registers::GSTAT, &mut value)
+        self.write_register(Registers::GSTAT, &mut value).await
     }
 
     /// clear ENC_STATUS register
-    pub fn clear_enc_status(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn clear_enc_status(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = 0b111_u32.to_be_bytes();
         //let mut value= (!0_u32).to_be_bytes();
-        self.write_register(Registers::ENC_STATUS, &mut value)
+        self.write_register(Registers::ENC_STATUS, &mut value).await
     }
 
     /// write value to SW_MODE register
-    pub fn update_sw_mode(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_sw_mode(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.sw_mode.into_bytes());
-        self.write_register(Registers::SW_MODE, &mut value)
+        self.write_register(Registers::SW_MODE, &mut value).await
     }
 
     /// write value to G_CONF register
-    pub fn update_g_conf(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_g_conf(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.g_conf.into_bytes());
-        self.write_register(Registers::GCONF, &mut value)
+        self.write_register(Registers::GCONF, &mut value).await
     }
 
     /// write value to CHOP_CONF register
-    pub fn update_chop_conf(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_chop_conf(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.chop_conf.into_bytes());
-        self.write_register(Registers::CHOPCONF, &mut value)
+        self.write_register(Registers::CHOPCONF, &mut value).await
     }
 
     /// write value to COOL_CONF register
-    pub fn update_cool_conf(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_cool_conf(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.cool_conf.into_bytes());
-        self.write_register(Registers::COOLCONF, &mut value)
+        self.write_register(Registers::COOLCONF, &mut value).await
     }
 
     /// write value to IHOLD_IRUN register
-    pub fn update_ihold_irun(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_ihold_irun(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.ihold_irun.into_bytes());
-        self.write_register(Registers::IHOLD_IRUN, &mut value)
+        self.write_register(Registers::IHOLD_IRUN, &mut value).await
     }
 
     /// write value to PWM_CONF register
-    pub fn update_pwm_conf(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_pwm_conf(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.pwm_conf.into_bytes());
-        self.write_register(Registers::PWMCONF, &mut value)
+        self.write_register(Registers::PWMCONF, &mut value).await
     }
 
     /// write value to ENC_MODE register
-    pub fn update_enc_mode(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn update_enc_mode(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = swap_bytes(self.enc_mode.into_bytes());
-        self.write_register(Registers::ENCMODE, &mut value)
+        self.write_register(Registers::ENCMODE, &mut value).await
     }
 
     /// write value to GLOBALSCALER register
-    pub fn set_global_scaler(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_global_scaler(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::GLOBALSCALER, &mut value)
+        self.write_register(Registers::GLOBALSCALER, &mut value).await
     }
 
     /// write value to TPOWERDOWN register
-    pub fn set_tpowerdown(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_tpowerdown(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::TPOWERDOWN, &mut value)
+        self.write_register(Registers::TPOWERDOWN, &mut value).await
     }
 
     /// write value to TPWMTHRS register
-    pub fn set_tpwmthrs(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_tpwmthrs(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::TPWMTHRS, &mut value)
+        self.write_register(Registers::TPWMTHRS, &mut value).await
     }
 
     /// write value to TCOOLTHRS register
-    pub fn set_tcoolthrs(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_tcoolthrs(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::TCOOLTHRS, &mut value)
+        self.write_register(Registers::TCOOLTHRS, &mut value).await
     }
 
     /// write value to A1 register
-    pub fn set_a1(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_a1(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::A1, &mut value)
+        self.write_register(Registers::A1, &mut value).await
     }
 
     /// write value to V1 register
-    pub fn set_v1(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_v1(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::V1, &mut value)
+        self.write_register(Registers::V1, &mut value).await
     }
 
     /// write value to AMAX register
-    pub fn set_amax(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_amax(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::AMAX, &mut value)
+        self.write_register(Registers::AMAX, &mut value).await
     }
 
     /// write value to VMAX register
-    pub fn set_vmax(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_vmax(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::VMAX, &mut value)
+        self.write_register(Registers::VMAX, &mut value).await
     }
 
     /// write value to DMAX register
-    pub fn set_dmax(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_dmax(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::DMAX, &mut value)
+        self.write_register(Registers::DMAX, &mut value).await
     }
 
     /// write value to D1 register
-    pub fn set_d1(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_d1(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::D1, &mut value)
+        self.write_register(Registers::D1, &mut value).await
     }
 
     /// write value to VSTART register
-    pub fn set_vstart(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_vstart(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::VSTART, &mut value)
+        self.write_register(Registers::VSTART, &mut value).await
     }
 
     /// write value to VSTOP register
-    pub fn set_vstop(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_vstop(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::VSTOP, &mut value)
+        self.write_register(Registers::VSTOP, &mut value).await
     }
 
     /// write value to PWM_AUTO register
-    pub fn set_pwm_auto(&mut self, val: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_pwm_auto(&mut self, val: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::PWM_AUTO, &mut value)
+        self.write_register(Registers::PWM_AUTO, &mut value).await
     }
 
     /// write value to RAMPMODE register
-    pub fn set_rampmode(&mut self, val: RampMode) -> Result<DataPacket, Error<E>> {
+    pub async fn set_rampmode(&mut self, val: RampMode) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut value = (val as u32).to_be_bytes();
-        self.write_register(Registers::RAMPMODE, &mut value)
+        self.write_register(Registers::RAMPMODE, &mut value).await
     }
 
     /// read offset register
-    pub fn read_offset(&mut self) -> Result<u32, Error<E>> {
-        self.read_register(Registers::OFFSET_READ).map(|packet| packet.data)
+    pub async fn read_offset(&mut self) -> Result<u32, Error<SPI::Error, PIN::Error>> {
+        self.read_register(Registers::OFFSET_READ).await.map(|packet| packet.data)
     }
 
     /// read TSTEP register
-    pub fn read_tstep(&mut self) -> Result<u32, Error<E>> {
-        self.read_register(Registers::TSTEP).map(|packet| packet.data)
+    pub async fn read_tstep(&mut self) -> Result<u32, Error<SPI::Error, PIN::Error>> {
+        self.read_register(Registers::TSTEP).await.map(|packet| packet.data)
     }
 
     /// read DRV_STATUS register
-    pub fn read_drv_status(&mut self) -> Result<DrvStatus, Error<E>> {
-        let packet = self.read_register(Registers::DRV_STATUS)?;
+    pub async fn read_drv_status(&mut self) -> Result<DrvStatus, Error<SPI::Error, PIN::Error>> {
+        let packet = self.read_register(Registers::DRV_STATUS).await?;
         self.status = packet.status;
         Ok(DrvStatus::from_bytes(packet.data.to_le_bytes()))
     }
 
     /// read GSTAT register
-    pub fn read_gstat(&mut self) -> Result<GStat, Error<E>> {
-        let packet = self.read_register(Registers::GSTAT)?;
+    pub async fn read_gstat(&mut self) -> Result<GStat, Error<SPI::Error, PIN::Error>> {
+        let packet = self.read_register(Registers::GSTAT).await?;
         self.status = packet.status;
         self.debug = packet.debug;
         Ok(GStat::from_bytes(packet.data.to_le_bytes()))
     }
 
     /// read GCONF register
-    pub fn read_gconf(&mut self) -> Result<GConf, Error<E>> {
-        let packet = self.read_register(Registers::GCONF)?;
+    pub async fn read_gconf(&mut self) -> Result<GConf, Error<SPI::Error, PIN::Error>> {
+        let packet = self.read_register(Registers::GCONF).await?;
         self.status = packet.status;
         Ok(GConf::from_bytes(packet.data.to_le_bytes()))
     }
 
     /// read RAMP_STAT register
-    pub fn read_ramp_status(&mut self) -> Result<RampStat, Error<E>> {
-        let packet = self.read_register(Registers::RAMP_STAT)?;
+    pub async fn read_ramp_status(&mut self) -> Result<RampStat, Error<SPI::Error, PIN::Error>> {
+        let packet = self.read_register(Registers::RAMP_STAT).await?;
         self.status = packet.status;
         Ok(RampStat::from_bytes(packet.data.to_le_bytes()))
     }
 
     /// read ENC_STATUS register
-    pub fn read_enc_status(&mut self) -> Result<EncStatus, Error<E>> {
-        let packet = self.read_register(Registers::ENC_STATUS)?;
+    pub async fn read_enc_status(&mut self) -> Result<EncStatus, Error<SPI::Error, PIN::Error>> {
+        let packet = self.read_register(Registers::ENC_STATUS).await?;
         self.status = packet.status;
         Ok(EncStatus::from_bytes(packet.data.to_le_bytes()))
     }
 
     /// set the position to 0 / home
-    pub fn set_home(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn set_home(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let mut val = 0_u32.to_be_bytes();
-        self.write_register(Registers::XACTUAL, &mut val)?;
-        let packet = self.write_register(Registers::XTARGET, &mut val)?;
+        self.write_register(Registers::XACTUAL, &mut val).await?;
+        let packet = self.write_register(Registers::XTARGET, &mut val).await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// stop the motor now
-    pub fn stop(&mut self) -> Result<DataPacket, Error<E>> {
+    pub async fn stop(&mut self) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         self.disable()?;
         let mut val = 0_u32.to_be_bytes();
-        self.write_register(Registers::VSTART, &mut val)?;
-        self.write_register(Registers::VMAX, &mut val)?;
+        self.write_register(Registers::VSTART, &mut val).await?;
+        self.write_register(Registers::VMAX, &mut val).await?;
         // TODO: check how we can restart the movement afterwards
-        let mut position = self.get_position()?.to_be_bytes();
-        let packet = self.write_register(Registers::XTARGET, &mut position)?;
+        let mut position = self.get_position().await?.to_be_bytes();
+        let packet = self.write_register(Registers::XTARGET, &mut position).await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// check if the motor is moving
-    pub fn is_moving(&mut self) -> Result<bool, Error<E>> {
-        self.read_drv_status().map(|packet| !packet.standstill())
+    pub async fn is_moving(&mut self) -> Result<bool, Error<SPI::Error, PIN::Error>> {
+        self.read_drv_status().await.map(|packet| !packet.standstill())
     }
 
     /// check if the motor has reached the target position
-    pub fn position_is_reached(&mut self) -> Result<bool, Error<E>> {
-        self.read_ramp_status().map(|packet| packet.position_reached())
+    pub async fn position_is_reached(&mut self) -> Result<bool, Error<SPI::Error, PIN::Error>> {
+        self.read_ramp_status().await.map(|packet| packet.position_reached())
     }
 
     /// check if the motor has reached the constant velocity
-    pub fn velocity_is_reached(&mut self) -> Result<bool, Error<E>> {
-        self.read_ramp_status().map(|packet| packet.velocity_reached())
+    pub async fn velocity_is_reached(&mut self) -> Result<bool, Error<SPI::Error, PIN::Error>> {
+        self.read_ramp_status().await.map(|packet| packet.velocity_reached())
     }
 
     /// check if motor is at right limit
-    pub fn is_at_limit_r(&mut self) -> Result<bool, Error<E>> {
-        self.read_ramp_status().map(|packet| packet.status_stop_r())
+    pub async fn is_at_limit_r(&mut self) -> Result<bool, Error<SPI::Error, PIN::Error>> {
+        self.read_ramp_status().await.map(|packet| packet.status_stop_r())
     }
 
     /// check if motor is at left limit
-    pub fn is_at_limit_l(&mut self) -> Result<bool, Error<E>> {
-        self.read_ramp_status().map(|packet| packet.status_stop_l())
+    pub async fn is_at_limit_l(&mut self) -> Result<bool, Error<SPI::Error, PIN::Error>> {
+        self.read_ramp_status().await.map(|packet| packet.status_stop_l())
     }
 
     /// set the max velocity (VMAX)
-    pub fn set_velocity(&mut self, velocity: f32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_velocity(&mut self, velocity: f32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         self.v_max = velocity;
         let v_max = self.speed_from_hz(velocity);
         let mut val = v_max.to_be_bytes();
-        let packet = self.write_register(Registers::VMAX, &mut val)?;
+        let packet = self.write_register(Registers::VMAX, &mut val).await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// set the max velocity (VMAX)
-    pub fn set_velocity_raw(&mut self, velocity: u32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_velocity_raw(&mut self, velocity: u32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         self.v_max = velocity as f32 / self._step_count * (self._clock / 16_777_216.0);
         let mut val = velocity.to_be_bytes();
-        let packet = self.write_register(Registers::VMAX, &mut val)?;
+        let packet = self.write_register(Registers::VMAX, &mut val).await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// set the max acceleration (AMAX, DMAX, A1, D1)
-    pub fn set_acceleration(&mut self, acceleration: f32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_acceleration(&mut self, acceleration: f32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let a_max = self.accel_from_hz(acceleration);
         let mut val = a_max.to_be_bytes();
-        self.write_register(Registers::AMAX, &mut val)?;
-        self.write_register(Registers::DMAX, &mut val)?;
-        self.write_register(Registers::A1, &mut val)?;
-        let packet = self.write_register(Registers::D1, &mut val)?;
+        self.write_register(Registers::AMAX, &mut val).await?;
+        self.write_register(Registers::DMAX, &mut val).await?;
+        self.write_register(Registers::A1, &mut val).await?;
+        let packet = self.write_register(Registers::D1, &mut val).await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// move to a specific location
-    pub fn move_to(&mut self, target: f32) -> Result<DataPacket, Error<E>> {
+    pub async fn move_to(&mut self, target: f32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         self.enable()?;
         let target = (target * self._step_count) as i32;
         let mut val = target.to_be_bytes();
-        let packet = self.write_register(Registers::XTARGET, &mut val)?;
+        let packet = self.write_register(Registers::XTARGET, &mut val).await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// get the latched position
-    pub fn get_latched_position(&mut self) -> Result<f32, Error<E>> {
-        self.read_register(Registers::XLATCH).map(|val| (val.data as i32) as f32 / self._step_count)
+    pub async fn get_latched_position(&mut self) -> Result<f32, Error<SPI::Error, PIN::Error>> {
+        self.read_register(Registers::XLATCH).await.map(|val| (val.data as i32) as f32 / self._step_count)
     }
 
     /// get the current position
-    pub fn get_position(&mut self) -> Result<f32, Error<E>> {
-        self.read_register(Registers::XACTUAL).map(|val| (val.data as i32) as f32 / self._step_count)
+    pub async fn get_position(&mut self) -> Result<f32, Error<SPI::Error, PIN::Error>> {
+        self.read_register(Registers::XACTUAL).await.map(|val| (val.data as i32) as f32 / self._step_count)
     }
 
     /// set the current position
-    pub fn set_position(&mut self, target_signed: i32) -> Result<DataPacket, Error<E>> {
+    pub async fn set_position(&mut self, target_signed: i32) -> Result<DataPacket, Error<SPI::Error, PIN::Error>> {
         let target = target_signed;
         let mut val = (target * self._step_count as i32).to_be_bytes();
-        self.write_register(Registers::XACTUAL, &mut val)
+        self.write_register(Registers::XACTUAL, &mut val).await
     }
 
     /// get the current velocity
-    pub fn get_velocity(&mut self) -> Result<f32, Error<E>> {
-        self.read_register(Registers::VACTUAL).map(|target| {
+    pub async fn get_velocity(&mut self) -> Result<f32, Error<SPI::Error, PIN::Error>> {
+        self.read_register(Registers::VACTUAL).await.map(|target| {
             if (target.data & 0b100000000000000000000000) == 0b100000000000000000000000 {
                 ((16777216 - target.data as i32) as f64 / self._step_count as f64) as f32
             } else {
@@ -625,7 +567,7 @@ impl<SPI, CS, EN, E> Tmc5160<SPI, CS, EN>
     }
 
     /// get the current target position (XTARGET)
-    pub fn get_target(&mut self) -> Result<f32, Error<E>> {
-        self.read_register(Registers::XTARGET).map(|packet| packet.data as f32 / self._step_count)
+    pub async fn get_target(&mut self) -> Result<f32, Error<SPI::Error, PIN::Error>> {
+        self.read_register(Registers::XTARGET).await.map(|packet| packet.data as f32 / self._step_count)
     }
 }
