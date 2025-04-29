@@ -50,7 +50,6 @@ impl fmt::Display for DataPacket {
 /// TMC5160 driver
 pub struct Tmc5160<SPI> {
     spi: SPI,
-   // en: Option<PIN>,
     /// the max velocity that is set
     pub v_max: f32,
     /// status register of the driver
@@ -59,7 +58,6 @@ pub struct Tmc5160<SPI> {
     pub debug: [u8; 5],
     _clock: f32,
     _step_count: f32,
-    _en_inverted: bool,
     /// value of the GCONF register
     pub g_conf: GConf,
     /// value of the NODECONF register
@@ -90,19 +88,17 @@ pub struct Tmc5160<SPI> {
 
 impl<SPI> Tmc5160<SPI>
     where
-        SPI: SpiDevice,
+        SPI: SpiDevice<u8>,
 {
-    /// Create a new driver from a SPI peripheral and a NCS pin
+    /// Create a new driver from an SpiDevice
     pub fn new(spi: SPI) -> Self {
         Tmc5160 {
             spi,
-           // en: None,
-            v_max: 0.0,
+           v_max: 0.0,
             status: SpiStatus::new(),
             debug: [0; 5],
             _clock: 12000000.0,
             _step_count: 256.0,
-            _en_inverted: false,
             g_conf: GConf::new(),
             node_conf: NodeConf::new(),
             otp_prog: OtpProg::new(),
@@ -116,12 +112,6 @@ impl<SPI> Tmc5160<SPI>
             cool_conf: CoolConf::new(),
             pwm_conf: PwmConf::new(),
         }
-    }
-
-    /// invert the enable pin
-    pub fn en_inverted(mut self, inv: bool) -> Self {
-        self._en_inverted = inv;
-        self
     }
 
     /// specify clock speed of the Tmc5160 (Default is 12 MHz)
