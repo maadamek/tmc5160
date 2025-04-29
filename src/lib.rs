@@ -11,7 +11,6 @@
 
 use core::fmt;
 use core::result::Result;
-use embedded_hal::digital::OutputPin;
 use embedded_hal_async::spi::{Mode, Phase, Polarity, SpiDevice};
 
 use crate::registers::*;
@@ -24,18 +23,6 @@ fn swap_bytes(input: [u8; 4]) -> [u8; 4] {
         output[4 - 1 - i] = input[i];
     }
     output
-}
-
-/// Error Type when SPI communication can fail for SPI and Pin reasons
-pub enum Error<SPI,PIN>
-where
-SPI: embedded_hal::spi::ErrorType,
-PIN: embedded_hal::digital::ErrorType,
-{
-    /// Error on the SPI bus
-    SpiError(SPI::Error),
-    /// Error by the Enable Pin
-    EnablePinError(PIN::Error)
 }
 
 /// SPI mode
@@ -61,9 +48,9 @@ impl fmt::Display for DataPacket {
 }
 
 /// TMC5160 driver
-pub struct Tmc5160<SPI, PIN> {
+pub struct Tmc5160<SPI> {
     spi: SPI,
-    en: Option<PIN>,
+   // en: Option<PIN>,
     /// the max velocity that is set
     pub v_max: f32,
     /// status register of the driver
@@ -101,16 +88,15 @@ pub struct Tmc5160<SPI, PIN> {
 
 
 
-impl<SPI, PIN> Tmc5160<SPI, PIN>
+impl<SPI> Tmc5160<SPI>
     where
         SPI: SpiDevice,
-        PIN: OutputPin,
 {
     /// Create a new driver from a SPI peripheral and a NCS pin
     pub fn new(spi: SPI) -> Self {
         Tmc5160 {
             spi,
-            en: None,
+           // en: None,
             v_max: 0.0,
             status: SpiStatus::new(),
             debug: [0; 5],
@@ -130,12 +116,6 @@ impl<SPI, PIN> Tmc5160<SPI, PIN>
             cool_conf: CoolConf::new(),
             pwm_conf: PwmConf::new(),
         }
-    }
-
-    /// attach an enable pin to the driver
-    pub fn attach_en(mut self, en: PIN) -> Self {
-        self.en = Some(en);
-        self
     }
 
     /// invert the enable pin
@@ -223,33 +203,6 @@ impl<SPI, PIN> Tmc5160<SPI, PIN>
         }
 
         Ok(DataPacket { status: SpiStatus::from_bytes([response_buffer[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
-    }
-
-
-    /// enable the motor if the EN pin was specified
-    pub fn enable(&mut self) -> Result<(), PIN::Error> {
-        if let Some(pin) = &mut self.en {
-            if self._en_inverted {
-                pin.set_high()
-            } else {
-                pin.set_low()
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    /// disable the motor if the EN pin was specified
-    pub fn disable(&mut self) -> Result<(), PIN::Error> {
-        if let Some(pin) = &mut self.en {
-            if self._en_inverted {
-                pin.set_low()
-            } else {
-                pin.set_high()
-            }
-        } else {
-            Ok(())
-        }
     }
 
     /// clear G_STAT register
@@ -448,14 +401,13 @@ impl<SPI, PIN> Tmc5160<SPI, PIN>
     }
 
     /// stop the motor now
-    pub async fn stop(&mut self) -> Result<DataPacket, Error<SPI,PIN>> {
-        self.disable().map_err(Error::EnablePinError)?;
+    pub async fn stop(&mut self) -> Result<DataPacket, SPI::Error> {
         let mut val = 0_u32.to_be_bytes();
-        self.write_register(Registers::VSTART, &mut val).await.map_err(Error::SpiError)?;
-        self.write_register(Registers::VMAX, &mut val).await.map_err(Error::SpiError)?;
+        self.write_register(Registers::VSTART, &mut val).await?;
+        self.write_register(Registers::VMAX, &mut val).await?;
         // TODO: check how we can restart the movement afterwards
-        let mut position = self.get_position().await.map_err(Error::SpiError)?.to_be_bytes();
-        let packet = self.write_register(Registers::XTARGET, &mut position).await.map_err(Error::SpiError)?;
+        let mut position = self.get_position().await?.to_be_bytes();
+        let packet = self.write_register(Registers::XTARGET, &mut position).await?;
         self.status = packet.status;
         Ok(packet)
     }
@@ -517,11 +469,10 @@ impl<SPI, PIN> Tmc5160<SPI, PIN>
     }
 
     /// move to a specific location
-    pub async fn move_to(&mut self, target: f32) -> Result<DataPacket, Error<SPI,PIN>> {
-        self.enable().map_err(Error::EnablePinError)?;
+    pub async fn move_to(&mut self, target: f32) -> Result<DataPacket, SPI::Error> {
         let target = (target * self._step_count) as i32;
         let mut val = target.to_be_bytes();
-        let packet = self.write_register(Registers::XTARGET, &mut val).await.map_err(Error::SpiError)?;
+        let packet = self.write_register(Registers::XTARGET, &mut val).await?;
         self.status = packet.status;
         Ok(packet)
     }
