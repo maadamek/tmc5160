@@ -1,4 +1,4 @@
-//! Registers of the TMC5160 
+//! Registers of the TMC5160
 extern crate modular_bitfield_to_value;
 
 use modular_bitfield::bitfield;
@@ -10,7 +10,6 @@ pub trait Address {
     /// convert register enum to u8 address
     fn addr(self) -> u8;
 }
-
 
 /// Register addresses of the TMC5160
 #[derive(Debug, Copy, Clone)]
@@ -148,7 +147,6 @@ impl Address for Registers {
     }
 }
 
-
 /// SPISTATUS
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
@@ -172,13 +170,15 @@ pub struct SpiStatus {
 #[derive(ToValue)]
 pub struct DrvStatus {
     pub sg_result: B10,
-    #[skip] _a: B2,
+    #[skip]
+    _a: B2,
     pub s2vsa: bool,
     pub s2vsb: bool,
     pub stealth: bool,
     pub fsactive: bool,
     pub cs_actual: B5,
-    #[skip] _b: B3,
+    #[skip]
+    _b: B3,
     pub stallguard: bool,
     pub ot: bool,
     pub otpw: bool,
@@ -212,8 +212,10 @@ pub struct GConf {
     pub small_hysteresis: bool,
     pub stop_enable: bool,
     pub direct_mode: bool,
-    #[skip] test_mode: bool,
-    #[skip] _fill: B14,
+    #[skip]
+    test_mode: bool,
+    #[skip]
+    _fill: B14,
 }
 
 /// GSTAT Register
@@ -225,7 +227,8 @@ pub struct GStat {
     pub reset: bool,
     pub drv_err: bool,
     pub uv_cp: bool,
-    #[skip] _fill: B29,
+    #[skip]
+    _fill: B29,
 }
 
 // IFCNT Register is disabled in SPI mode
@@ -238,9 +241,9 @@ pub struct GStat {
 pub struct NodeConf {
     pub nodeaddr: u8,
     pub senddelay: B4,
-    #[skip] _fill: B20,
+    #[skip]
+    _fill: B20,
 }
-
 
 /// IOIN Register
 #[derive(Clone, Copy)]
@@ -257,9 +260,9 @@ pub struct IoIn {
     pub sd_mode: bool,
     pub swcomp_in: bool,
     pub version: u8,
-    #[skip] _fill: B16,
+    #[skip]
+    _fill: B16,
 }
-
 
 /// OTP_PROG Register
 #[derive(Clone, Copy)]
@@ -269,9 +272,11 @@ pub struct IoIn {
 pub struct OtpProg {
     pub otpbit: B3,
     pub otpbyte: B2,
-    #[skip] __: B3,
+    #[skip]
+    __: B3,
     pub otpmagic: u8,
-    #[skip] _fill: B16,
+    #[skip]
+    _fill: B16,
 }
 
 /// OTPREAD
@@ -284,7 +289,8 @@ pub struct OtpRead {
     pub otp_s2_level: bool,
     pub otp_bbm: bool,
     pub otp_tbl: bool,
-    #[skip] _fill: B24,
+    #[skip]
+    _fill: B24,
 }
 
 /// SHORT_CONF
@@ -294,12 +300,15 @@ pub struct OtpRead {
 #[derive(ToValue)]
 pub struct ShortConf {
     pub s2vs_level: B4,
-    #[skip] _a: B4,
+    #[skip]
+    _a: B4,
     pub s2g_level: B4,
-    #[skip] _b: B4,
+    #[skip]
+    _b: B4,
     pub shortfilter: B2,
     pub shortdelay: bool,
-    #[skip] _fill: B13,
+    #[skip]
+    _fill: B13,
 }
 
 /// DrvConfRegister
@@ -310,17 +319,20 @@ pub struct ShortConf {
 pub struct DrvConf {
     /// "Break Before Make" duration specified in ns (0 to 24)
     pub bbm_time: B4,
-    #[skip] _a: B4,
+    #[skip]
+    _a: B4,
     /// "Break Before Make" duration specified in clock cycles (0 to 15).
     pub bbm_clks: B4,
-    #[skip] _b: B4,
+    #[skip]
+    _b: B4,
     /// over temperature selection
     pub ots_select: B2,
     /// MOSFET gate driver current (0 to 3)
     pub drv_strength: B2,
     /// filter time constant
     pub filt_isense: B2,
-    #[skip] _fill: B10,
+    #[skip]
+    _fill: B10,
 }
 
 /// OFFSET_READ
@@ -332,7 +344,6 @@ pub struct OffsetRead {
     pub phase_b: u8,
 }
 
-
 /// IHOLD_IRUN Register
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -341,14 +352,18 @@ pub struct OffsetRead {
 pub struct IHoldIRun {
     /// motor hold current
     pub i_hold: B5,
-    #[skip] _a: B3,
+    #[skip]
+    _a: B3,
     /// motor run current
     pub i_run: B5,
-    #[skip] _b: B3,
+    #[skip]
+    _b: B3,
     /// number of clock cycles after motion
     pub i_hold_delay: B4,
-    #[skip] _c: B4,
-    #[skip] _d: B8,
+    #[skip]
+    _c: B4,
+    #[skip]
+    _d: B8,
 }
 
 /// RAMPMODE Register
@@ -363,7 +378,6 @@ pub enum RampMode {
     /// velocity remains unchanged, unless stop event occurs
     HoldMode = 0x03,
 }
-
 
 /// SW_MODE Register
 #[derive(Clone, Copy)]
@@ -383,9 +397,9 @@ pub struct SwMode {
     pub en_latch_encoder: bool,
     pub sg_stop: bool,
     pub en_softstop: bool,
-    #[skip] _fill: B20,
+    #[skip]
+    _fill: B20,
 }
-
 
 /// RAMOSTAT Register
 #[derive(Clone, Copy)]
@@ -407,9 +421,9 @@ pub struct RampStat {
     pub t_zerowait_active: bool,
     pub second_move: bool,
     pub status_sg: bool,
-    #[skip] _fill: B18,
+    #[skip]
+    _fill: B18,
 }
-
 
 /// ENCMODE Register
 #[derive(Clone, Copy)]
@@ -428,7 +442,8 @@ pub struct EncMode {
     pub clr_enc_x: bool,
     pub latch_x_act: bool,
     pub enc_sel_decimal: bool,
-    #[skip] _fill: B21,
+    #[skip]
+    _fill: B21,
 }
 
 /// ENC_STATUS Register
@@ -439,9 +454,9 @@ pub struct EncMode {
 pub struct EncStatus {
     pub n_event: bool,
     pub deviation_warn: bool,
-    #[skip] _fill: B30,
+    #[skip]
+    _fill: B30,
 }
-
 
 /// MSLUTSEL Register
 #[derive(Clone, Copy)]
@@ -469,10 +484,12 @@ pub struct ChopConf {
     pub hend: B4,
     pub fd3: bool,
     pub disfdcc: bool,
-    #[skip] _a: B1,
+    #[skip]
+    _a: B1,
     pub chm: bool,
     pub tbl: B2,
-    #[skip] _b: B1,
+    #[skip]
+    _b: B1,
     pub vhighfs: bool,
     pub vhighchm: bool,
     pub tpfd: B4,
@@ -489,7 +506,6 @@ impl Default for ChopConf {
     }
 }
 
-
 /// COOLCONF Register
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -497,17 +513,22 @@ impl Default for ChopConf {
 #[derive(ToValue)]
 pub struct CoolConf {
     pub semin: B4,
-    #[skip] _a: B1,
+    #[skip]
+    _a: B1,
     pub seup: B2,
-    #[skip] _b: B1,
+    #[skip]
+    _b: B1,
     pub semax: B4,
-    #[skip] _c: B1,
+    #[skip]
+    _c: B1,
     pub sedn: B2,
     pub seimin: bool,
     pub sgt: B6,
-    #[skip] _d: B1,
+    #[skip]
+    _d: B1,
     pub sfilt: bool,
-    #[skip] _e: B8,
+    #[skip]
+    _e: B8,
 }
 
 /// PWMCONF Register
@@ -522,7 +543,8 @@ pub struct PwmConf {
     pub pwm_autoscale: bool,
     pub pwm_autograd: bool,
     pub free_wheel: B2,
-    #[skip] __: B2,
+    #[skip]
+    __: B2,
     pub pwm_reg: B4,
     pub pwm_lim: B4,
 }

@@ -84,17 +84,15 @@ pub struct Tmc5160<SPI> {
     pub pwm_conf: PwmConf,
 }
 
-
-
 impl<SPI> Tmc5160<SPI>
-    where
-        SPI: SpiDevice<u8>,
+where
+    SPI: SpiDevice<u8>,
 {
     /// Create a new driver from an SpiDevice
     pub fn new(spi: SPI) -> Self {
         Tmc5160 {
             spi,
-           v_max: 0.0,
+            v_max: 0.0,
             status: SpiStatus::new(),
             debug: [0; 5],
             _clock: 12000000.0,
@@ -139,8 +137,8 @@ impl<SPI> Tmc5160<SPI>
 
     /// read a specified register
     pub async fn read_register<T>(&mut self, reg: T) -> Result<DataPacket, SPI::Error>
-        where
-            T: Address + Copy,
+    where
+        T: Address + Copy,
     {
         // Process cmd to read, return previous (dummy) state
         let _dummy = self.read_io(reg).await?;
@@ -149,14 +147,14 @@ impl<SPI> Tmc5160<SPI>
     }
 
     async fn read_io<T>(&mut self, reg: T) -> Result<DataPacket, SPI::Error>
-        where
-            T: Address + Copy,
+    where
+        T: Address + Copy,
     {
         let mut buffer = [reg.addr(), 0, 0, 0, 0];
 
-        let mut response_buffer = [0u8;5];
+        let mut response_buffer = [0u8; 5];
 
-       self.spi.transfer(&mut buffer, &mut response_buffer).await?;
+        self.spi.transfer(&mut response_buffer, &mut buffer).await?;
 
         let mut ret_val: [u8; 4] = [0; 4];
 
@@ -170,21 +168,29 @@ impl<SPI> Tmc5160<SPI>
             debug_val[i] = response_buffer[i];
         }
 
-        Ok(DataPacket { status: SpiStatus::from_bytes([response_buffer[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
+        Ok(DataPacket {
+            status: SpiStatus::from_bytes([response_buffer[0]]),
+            data: u32::from_be_bytes(ret_val),
+            debug: debug_val,
+        })
     }
 
     /// write value to a specified register
-    pub async fn write_register<T>(&mut self, reg: T, val: &mut [u8; 4]) -> Result<DataPacket, SPI::Error>
-        where
-            T: Address + Copy,
+    pub async fn write_register<T>(
+        &mut self,
+        reg: T,
+        val: &mut [u8; 4],
+    ) -> Result<DataPacket, SPI::Error>
+    where
+        T: Address + Copy,
     {
         let mut buffer = [reg.addr() | 0x80, val[0], val[1], val[2], val[3]];
 
         let debug_val = buffer.clone();
 
-        let mut response_buffer = [0u8;5];
+        let mut response_buffer = [0u8; 5];
 
-        self.spi.transfer(&mut buffer, &mut response_buffer).await?;
+        self.spi.transfer(&mut response_buffer, &mut buffer).await?;
 
         let mut ret_val: [u8; 4] = [0; 4];
 
@@ -192,7 +198,11 @@ impl<SPI> Tmc5160<SPI>
             ret_val[i] = response_buffer[i + 1];
         }
 
-        Ok(DataPacket { status: SpiStatus::from_bytes([response_buffer[0]]), data: u32::from_be_bytes(ret_val), debug: debug_val })
+        Ok(DataPacket {
+            status: SpiStatus::from_bytes([response_buffer[0]]),
+            data: u32::from_be_bytes(ret_val),
+            debug: debug_val,
+        })
     }
 
     /// clear G_STAT register
@@ -254,7 +264,8 @@ impl<SPI> Tmc5160<SPI>
     /// write value to GLOBALSCALER register
     pub async fn set_global_scaler(&mut self, val: u32) -> Result<DataPacket, SPI::Error> {
         let mut value = val.to_be_bytes();
-        self.write_register(Registers::GLOBALSCALER, &mut value).await
+        self.write_register(Registers::GLOBALSCALER, &mut value)
+            .await
     }
 
     /// write value to TPOWERDOWN register
@@ -337,12 +348,16 @@ impl<SPI> Tmc5160<SPI>
 
     /// read offset register
     pub async fn read_offset(&mut self) -> Result<u32, SPI::Error> {
-        self.read_register(Registers::OFFSET_READ).await.map(|packet| packet.data)
+        self.read_register(Registers::OFFSET_READ)
+            .await
+            .map(|packet| packet.data)
     }
 
     /// read TSTEP register
     pub async fn read_tstep(&mut self) -> Result<u32, SPI::Error> {
-        self.read_register(Registers::TSTEP).await.map(|packet| packet.data)
+        self.read_register(Registers::TSTEP)
+            .await
+            .map(|packet| packet.data)
     }
 
     /// read DRV_STATUS register
@@ -397,34 +412,46 @@ impl<SPI> Tmc5160<SPI>
         self.write_register(Registers::VMAX, &mut val).await?;
         // TODO: check how we can restart the movement afterwards
         let mut position = self.get_position().await?.to_be_bytes();
-        let packet = self.write_register(Registers::XTARGET, &mut position).await?;
+        let packet = self
+            .write_register(Registers::XTARGET, &mut position)
+            .await?;
         self.status = packet.status;
         Ok(packet)
     }
 
     /// check if the motor is moving
     pub async fn is_moving(&mut self) -> Result<bool, SPI::Error> {
-        self.read_drv_status().await.map(|packet| !packet.standstill())
+        self.read_drv_status()
+            .await
+            .map(|packet| !packet.standstill())
     }
 
     /// check if the motor has reached the target position
     pub async fn position_is_reached(&mut self) -> Result<bool, SPI::Error> {
-        self.read_ramp_status().await.map(|packet| packet.position_reached())
+        self.read_ramp_status()
+            .await
+            .map(|packet| packet.position_reached())
     }
 
     /// check if the motor has reached the constant velocity
     pub async fn velocity_is_reached(&mut self) -> Result<bool, SPI::Error> {
-        self.read_ramp_status().await.map(|packet| packet.velocity_reached())
+        self.read_ramp_status()
+            .await
+            .map(|packet| packet.velocity_reached())
     }
 
     /// check if motor is at right limit
     pub async fn is_at_limit_r(&mut self) -> Result<bool, SPI::Error> {
-        self.read_ramp_status().await.map(|packet| packet.status_stop_r())
+        self.read_ramp_status()
+            .await
+            .map(|packet| packet.status_stop_r())
     }
 
     /// check if motor is at left limit
     pub async fn is_at_limit_l(&mut self) -> Result<bool, SPI::Error> {
-        self.read_ramp_status().await.map(|packet| packet.status_stop_l())
+        self.read_ramp_status()
+            .await
+            .map(|packet| packet.status_stop_l())
     }
 
     /// set the max velocity (VMAX)
@@ -469,12 +496,16 @@ impl<SPI> Tmc5160<SPI>
 
     /// get the latched position
     pub async fn get_latched_position(&mut self) -> Result<f32, SPI::Error> {
-        self.read_register(Registers::XLATCH).await.map(|val| (val.data as i32) as f32 / self._step_count)
+        self.read_register(Registers::XLATCH)
+            .await
+            .map(|val| (val.data as i32) as f32 / self._step_count)
     }
 
     /// get the current position
     pub async fn get_position(&mut self) -> Result<f32, SPI::Error> {
-        self.read_register(Registers::XACTUAL).await.map(|val| (val.data as i32) as f32 / self._step_count)
+        self.read_register(Registers::XACTUAL)
+            .await
+            .map(|val| (val.data as i32) as f32 / self._step_count)
     }
 
     /// set the current position
@@ -502,6 +533,8 @@ impl<SPI> Tmc5160<SPI>
 
     /// get the current target position (XTARGET)
     pub async fn get_target(&mut self) -> Result<f32, SPI::Error> {
-        self.read_register(Registers::XTARGET).await.map(|packet| packet.data as f32 / self._step_count)
+        self.read_register(Registers::XTARGET)
+            .await
+            .map(|packet| packet.data as f32 / self._step_count)
     }
 }
