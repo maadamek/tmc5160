@@ -223,7 +223,7 @@ where
     /// if value is 0, deviation warnings are disabled
     pub async fn set_max_enc_deviation(&mut self, max_deviation: u32) -> Result<DataPacket, SPI::Error>{
         let mut value = max_deviation.to_be_bytes();
-            self.write_register(Registers::ENC_CONST, &mut value).await
+            self.write_register(Registers::ENC_DEVIATION, &mut value).await
     }
 
     /// sets the encoder resolution
