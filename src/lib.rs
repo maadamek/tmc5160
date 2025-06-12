@@ -125,14 +125,14 @@ where
     }
 
     fn speed_from_hz(&mut self, speed_hz: f32) -> u32 {
-        return (speed_hz / (self._clock / 16_777_216.0) * self._step_count) as u32;
+        (speed_hz / (self._clock / 16_777_216.0) * self._step_count) as u32
     }
 
     fn accel_from_hz(&mut self, accel_hz_per_s: f32) -> u32 {
-        return (accel_hz_per_s / (self._clock * self._clock)
+        (accel_hz_per_s / (self._clock * self._clock)
             * (512.0 * 256.0)
             * 16_777_216.0
-            * self._step_count) as u32;
+            * self._step_count) as u32
     }
 
     /// read a specified register
@@ -150,23 +150,19 @@ where
     where
         T: Address + Copy,
     {
-        let mut buffer = [reg.addr(), 0, 0, 0, 0];
+        let buffer = [reg.addr(), 0, 0, 0, 0];
 
         let mut response_buffer = [0u8; 5];
 
-        self.spi.transfer(&mut response_buffer, &mut buffer).await?;
+        self.spi.transfer(&mut response_buffer, &buffer).await?;
 
         let mut ret_val: [u8; 4] = [0; 4];
 
-        for i in 0..4 {
-            ret_val[i] = response_buffer[i + 1];
-        }
+        ret_val.copy_from_slice(&response_buffer[1..(4 + 1)]);
 
         let mut debug_val: [u8; 5] = [0; 5];
 
-        for i in 0..5 {
-            debug_val[i] = response_buffer[i];
-        }
+        debug_val.copy_from_slice(&response_buffer);
 
         Ok(DataPacket {
             status: SpiStatus::from_bytes([response_buffer[0]]),
@@ -184,19 +180,17 @@ where
     where
         T: Address + Copy,
     {
-        let mut buffer = [reg.addr() | 0x80, val[0], val[1], val[2], val[3]];
+        let buffer = [reg.addr() | 0x80, val[0], val[1], val[2], val[3]];
 
         let debug_val = buffer.clone();
 
         let mut response_buffer = [0u8; 5];
 
-        self.spi.transfer(&mut response_buffer, &mut buffer).await?;
+        self.spi.transfer(&mut response_buffer, &buffer).await?;
 
         let mut ret_val: [u8; 4] = [0; 4];
 
-        for i in 0..4 {
-            ret_val[i] = response_buffer[i + 1];
-        }
+        ret_val.copy_from_slice(&response_buffer[1..(4 + 1)]);
 
         Ok(DataPacket {
             status: SpiStatus::from_bytes([response_buffer[0]]),
@@ -208,7 +202,7 @@ where
     fn mres_to_microsteps(&self) -> u16 {
         match self.chop_conf.mres() {
             0 => 256,
-            x => (2 as u16).pow(x as u32),
+            x => (2_u16).pow(x as u32),
         }
     }
 
@@ -219,11 +213,21 @@ where
         self.write_register(Registers::GSTAT, &mut value).await
     }
 
-        /// sets the maximum allowed encoder deviation
+    /// sets the maximum allowed encoder deviation
     /// if value is 0, deviation warnings are disabled
-    pub async fn set_max_enc_deviation(&mut self, max_deviation: u32) -> Result<DataPacket, SPI::Error>{
+    pub async fn set_max_enc_deviation(
+        &mut self,
+        max_deviation: u32,
+    ) -> Result<DataPacket, SPI::Error> {
         let mut value = max_deviation.to_be_bytes();
-            self.write_register(Registers::ENC_DEVIATION, &mut value).await
+        self.write_register(Registers::ENC_DEVIATION, &mut value)
+            .await
+    }
+
+    /// Sets the current encoder position to 0
+    pub async fn set_enc_home(&mut self) -> Result<DataPacket, SPI::Error> {
+        let mut value = [0; 4];
+        self.write_register(Registers::X_ENC, &mut value).await
     }
 
     /// sets the encoder resolution
@@ -245,7 +249,9 @@ where
 
     /// get ENC_STATUS register
     pub async fn get_enc_status(&mut self) -> Result<EncStatus, SPI::Error> {
-        self.read_register(Registers::ENC_STATUS).await.map(|res| EncStatus::from_bytes(res.data.to_le_bytes()))
+        self.read_register(Registers::ENC_STATUS)
+            .await
+            .map(|res| EncStatus::from_bytes(res.data.to_le_bytes()))
     }
 
     /// clear ENC_STATUS register
