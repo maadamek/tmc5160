@@ -254,6 +254,13 @@ where
             .map(|res| EncStatus::from_bytes(res.data.to_le_bytes()))
     }
 
+    /// get current encoder position
+    pub async fn get_enc_position(&mut self) -> Result<i32, SPI::Error> {
+        self.read_register(Registers::X_ENC)
+            .await
+            .map(|res| i32::from_le_bytes(res.data.to_le_bytes()))
+    }
+
     /// clear ENC_STATUS register
     pub async fn clear_enc_status(&mut self) -> Result<DataPacket, SPI::Error> {
         let mut value = 0b111_u32.to_be_bytes();
