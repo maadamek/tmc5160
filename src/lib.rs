@@ -205,11 +205,47 @@ where
         })
     }
 
+    fn mres_to_microsteps(&self) -> u16 {
+        match self.chop_conf.mres() {
+            0 => 256,
+            x => (2 as u16).pow(x as u32),
+        }
+    }
+
     /// clear G_STAT register
     pub async fn clear_g_stat(&mut self) -> Result<DataPacket, SPI::Error> {
         let mut value = 0b111_u32.to_be_bytes();
         //let mut value= (!0_u32).to_be_bytes();
         self.write_register(Registers::GSTAT, &mut value).await
+    }
+
+        /// sets the maximum allowed encoder deviation
+    /// if value is 0, deviation warnings are disabled
+    pub async fn set_max_enc_deviation(&mut self, max_deviation: u32) -> Result<DataPacket, SPI::Error>{
+        let mut value = max_deviation.to_be_bytes();
+            self.write_register(Registers::ENC_CONST, &mut value).await
+    }
+
+    /// sets the encoder resolution
+    /// the calculation depends on the microstep resolution and the ENCMode.enc_sel_decimal
+    /// if any of the these registers change set_enc_resolution needs to be configured again!
+    pub async fn set_enc_resolution(&mut self, encoder_cpr: i32) -> Result<DataPacket, SPI::Error> {
+        let multiplier = if self.enc_mode.enc_sel_decimal() {
+            10e4
+        } else {
+            2e16
+        };
+        let enc_const = encoder_cpr as f32 / self.mres_to_microsteps() as f32;
+
+        let factor = enc_const as i32;
+        let fraction = ((enc_const - factor as f32) * multiplier) as i32;
+        let mut value = ((factor << 16) | fraction).to_be_bytes();
+        self.write_register(Registers::ENC_CONST, &mut value).await
+    }
+
+    /// get ENC_STATUS register
+    pub async fn get_enc_status(&mut self) -> Result<EncStatus, SPI::Error> {
+        self.read_register(Registers::ENC_STATUS).await.map(|res| EncStatus::from_bytes(res.data.to_le_bytes()))
     }
 
     /// clear ENC_STATUS register
